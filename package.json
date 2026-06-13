@@ -1,0 +1,74 @@
+{
+  "name": "mirror-avatar-sdk",
+  "version": "0.1.1",
+  "description": "React Native SDK for a real-time, voice-driven 3D talking avatar (iOS + Android).",
+  "main": "lib/commonjs/index.js",
+  "module": "lib/module/index.js",
+  "types": "lib/typescript/index.d.ts",
+  "react-native": "lib/module/index.js",
+  "source": "src/index.ts",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "Flashbox",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sidduflashbox/mirror-avatar-sdk.git"
+  },
+  "homepage": "https://github.com/sidduflashbox/mirror-avatar-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/sidduflashbox/mirror-avatar-sdk/issues"
+  },
+  "scripts": {
+    "prepare": "bob build",
+    "build:js": "bob build",
+    "typecheck": "tsc --noEmit",
+    "pack:check": "npm pack --dry-run"
+  },
+  "files": [
+    "lib",
+    "src",
+    "ios/Sources",
+    "ios/Frameworks/MirrorCore.xcframework",
+    "android/src",
+    "android/build.gradle.kts",
+    "android/README.md",
+    "MirrorAvatar.podspec",
+    "react-native.config.js",
+    "tsconfig.json",
+    "README.md",
+    "docs/INTEGRATION.md"
+  ],
+  "keywords": [
+    "react-native",
+    "avatar",
+    "3d",
+    "websocket",
+    "voice",
+    "ios",
+    "android"
+  ],
+  "peerDependencies": {
+    "react": ">=18.2.0",
+    "react-native": ">=0.73.0",
+    "react-native-filament": ">=1.11.0",
+    "react-native-worklets-core": ">=1.6.0"
+  },
+  "devDependencies": {
+    "@react-native/babel-preset": "0.86.0",
+    "@types/react": "^19.0.0",
+    "react": "19.2.3",
+    "react-native": "0.86.0",
+    "react-native-builder-bob": "^0.30.0",
+    "react-native-filament": "^1.11.0",
+    "react-native-worklets-core": "^1.6.3",
+    "typescript": "^5.4.0"
+  },
+  "react-native-builder-bob": {
+    "source": "src",
+    "output": "lib",
+    "targets": [
+      "commonjs",
+      "module",
+      "typescript"
+    ]
+  }
+}

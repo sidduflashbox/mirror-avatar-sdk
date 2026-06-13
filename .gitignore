@@ -1,0 +1,23 @@
+node_modules/
+
+# Compiled output — generated from src/ by `bob build` (runs on npm install/publish).
+# Not committed; the published package still ships it (see package.json "files").
+lib/
+
+# Lockfile — regenerated on install; the library pins versions via package.json ranges.
+package-lock.json
+
+# iOS
+ios/Pods/
+ios/build/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Android
+android/.gradle/
+android/build/
+
+# misc
+.DS_Store
+*.tgz
