@@ -1,0 +1,8 @@
+framework module "MirrorCore" {
+    umbrella header "MirrorCore.h"
+
+    export *
+    module * { export * }
+
+    use Foundation
+}
