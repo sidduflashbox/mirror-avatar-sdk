@@ -15,7 +15,7 @@ on **RN 0.86 / React 19** (iOS + Android).
 
 | Item | Form |
 |---|---|
-| The package `mirror-avatar-sdk` | a packed `.tgz` (or a private registry / Git tag) |
+| The package `mirror-avatar-sdk` | install from the GitHub tarball URL, a local `.tgz`, or a registry |
 | Compiled JS + TypeScript types | `lib/` — no Metro/Babel config for the SDK itself |
 | iOS native (audio) — prebuilt `MirrorCore.xcframework` + Swift sources + podspec | inside the package; linked by CocoaPods autolinking |
 | Android native (audio) — Kotlin sources + `build.gradle.kts` | inside the package; linked by Gradle autolinking |
@@ -55,11 +55,21 @@ import { MirrorSDK, MirrorAvatarView } from 'mirror-avatar-sdk';
 
 ### 1. Install the package + peer dependencies
 
+Install the SDK **and** its native peer deps **first — before the iOS/Android native steps** —
+because CocoaPods (and Gradle) only link the native modules that are present at pod/build time.
+
 ```bash
-npm install /path/to/mirror-avatar-sdk-0.1.1.tgz
+# the SDK — prebuilt tarball straight from GitHub
+npm install https://github.com/sidduflashbox/mirror-avatar-sdk/raw/main/mirror-avatar-sdk-0.1.1.tgz
+
+# native peer deps the SDK needs
 npm install react-native-filament react-native-worklets-core react-native-safe-area-context
 ```
-(`react` / `react-native` come from your app.)
+(`react` / `react-native` come from your app. You can also install from a local `.tgz` path or a
+private registry instead of the URL.)
+
+> npm may warn `mirror-avatar-sdk (prepare: bob build) has install scripts` — ignore it; the tarball
+> is prebuilt, so nothing runs.
 
 ### 2. Configure Babel for worklets
 
@@ -78,20 +88,36 @@ hoisted into a fresh app — installing them explicitly avoids a `Cannot find mo
 build error):
 
 ```bash
-npm install -D @babel/plugin-proposal-optional-chaining \
-               @babel/plugin-proposal-nullish-coalescing-operator \
-               @babel/preset-typescript
+npm install -D @babel/preset-typescript@^7 \
+               @babel/plugin-proposal-optional-chaining@^7 \
+               @babel/plugin-proposal-nullish-coalescing-operator@^7
 ```
 
 After changing Babel config, restart Metro with a reset cache: `npm start -- --reset-cache`.
 
 ### 3. iOS native
 
+Run this **after Step 1**, so pods pick up `react-native-worklets-core`, `react-native-filament`,
+and the SDK. From the app's `ios/` directory:
+
 ```bash
-LANG=en_US.UTF-8 npx pod-install ios
+cd ios
+LANG=en_US.UTF-8 pod install     # global CocoaPods
+cd ..
 ```
 Autolinking finds the SDK pod + `MirrorCore.xcframework` — no manual Podfile/Xcode edits. The
-`LANG=` prefix avoids a CocoaPods `Encoding::CompatibilityError` on non-UTF-8 locales.
+`LANG=` prefix avoids a CocoaPods `Encoding::CompatibilityError` on non-UTF-8 locales. (Alternatives:
+`npx pod-install` from the app root, or `bundle exec pod install` if you use the Gemfile/bundler —
+but that needs the bundler gems installed and a recent Ruby.)
+
+Confirm the native modules linked:
+```bash
+grep -iE "worklet|filament|MirrorAvatar" ios/Podfile.lock   # should list all three
+```
+
+> **Re-run `pod install` and do a full native rebuild whenever you add or change a native
+> dependency.** Reloading Metro (pressing `r`) does **not** compile a new native module into the app
+> binary — that is what produces `'Worklets' could not be found` at runtime (see Troubleshooting).
 
 The avatar needs the **microphone**; add to the app's `Info.plist`:
 ```xml
@@ -216,9 +242,12 @@ function Screen() {
 
 ### 7. Build & run
 
+Do a **full native rebuild** (not a Metro reload) — the native modules from Steps 1 & 3 have to be
+compiled into the app binary:
+
 ```bash
-npm start -- --reset-cache            # if you changed Babel/config
-npx react-native run-ios --device     # or run-android
+npm start -- --reset-cache            # terminal 1 (after any Babel/config change)
+npx react-native run-ios --device     # terminal 2 — a real native build (or run-android)
 ```
 Grant the mic prompt, tap the button, speak — the avatar replies and lip-syncs.
 
@@ -235,6 +264,12 @@ Grant the mic prompt, tap the button, speak — the avatar replies and lip-syncs
 
 ## F. Troubleshooting
 
+- **`'Worklets'` (or `'Filament'` / `'MirrorAvatar'`) `could not be found. Verify that a module by this
+  name is registered in the native binary`** → the native module isn't in your built app. Almost always
+  because `pod install` ran **before** the peer deps were installed, or you reloaded Metro instead of
+  rebuilding. Fix: finish Step 1, run `pod install` again from `ios/` (Android needs nothing extra —
+  autolinking runs during the Gradle build), then do a **full native rebuild** (`npm run ios` / Xcode
+  Build — not a Metro reload).
 - **`Cannot find module '@babel/plugin-proposal-optional-chaining'`** (or nullish / preset-typescript)
   → install the three Babel devDeps in §D-2, then `npm start -- --reset-cache`.
 - **Avatar screen opens then immediately closes** → you are (a) unmounting on `onEnded` — use
