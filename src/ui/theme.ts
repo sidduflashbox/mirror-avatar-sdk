@@ -78,6 +78,31 @@ export const VEIL_BG = 'rgba(0,0,0,0.6)';
 export const VEIL_CARD_BG = '#111120';
 export const VEIL_CARD_WIDTH = 288;
 
+/** Floating (picture-in-picture) window. Shrunk from fullscreen to a draggable corner card that
+ *  stays live above the host app. Sized *relative to the screen* so it reads the same on a small
+ *  phone, a large phone, or a tablet: its width is a fraction of the screen width (clamped to a
+ *  sensible range), and its height follows a portrait aspect that suits the head-and-shoulders shot. */
+export const PIP_WIDTH_FRACTION = 0.4; // 40% of the screen's shorter usable width
+export const PIP_MIN_WIDTH = 128; // never smaller than this (tiny phones)
+export const PIP_MAX_WIDTH = 240; // never larger than this (tablets)
+export const PIP_ASPECT = 0.75; // width : height = 3 : 4 (portrait)
+export const PIP_MARGIN = 16; // gap to the screen / safe-area edge
+export const PIP_RADIUS = 22; // corner radius of the little card
+export const PIP_MORPH_MS = 260; // fullscreen <-> corner size/position tween
+/** A downward swipe on the fullscreen surface past this much travel (px) collapses it to the
+ *  corner — the alternative to tapping the ⤡ button. A fast flick shrinks at a shorter distance. */
+export const PIP_SWIPE_SHRINK_DY = 90;
+/** Below this much finger travel (px), a press-and-release on the card counts as a tap → expand,
+ *  rather than a drag. */
+export const PIP_TAP_SLOP = 6;
+/** Round shrink (⤡) button on the fullscreen surface. */
+export const PIP_SHRINK_BTN = 36;
+/** Round close (✕) button on the corner card. */
+export const PIP_CLOSE_BTN = 26;
+export const PIP_BTN_BG = 'rgba(0,0,0,0.45)';
+export const PIP_BTN_BORDER = 'rgba(255,255,255,0.15)';
+export const PIP_BORDER = 'rgba(255,255,255,0.12)'; // hairline around the corner card
+
 /** End-of-call summary panel — a frosted `bg-black/40` card. React Native has no
  *  backdrop-blur, so the card leans a touch more opaque to stay legible over the moving avatar. */
 export const SUMMARY_BG = 'rgba(0,0,0,0.4)';
