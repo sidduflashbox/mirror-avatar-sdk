@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import {
   PIP_ASPECT,
+  PIP_FOCUS_FRAC,
   PIP_MARGIN,
   PIP_MAX_WIDTH,
   PIP_MIN_WIDTH,
@@ -21,6 +22,7 @@ import {
   clampToScreen,
   cornerRect,
   nearestCorner,
+  pipInnerTransform,
   pipSize,
   type PipCorner,
   type PipFrameConfig,
@@ -37,8 +39,11 @@ export interface PipInsetsProp {
 export interface PipWindow {
   /** True while collapsed to the corner card. */
   isPip: boolean;
-  /** Animated geometry for the morphing frame — spread into the frame's style. */
-  frameStyle: {
+  /**
+   * The clip window (a plain View — safe to resize): position + size + rounded corners of the
+   * visible card, plus the swipe-down offset. Spread onto the outer `overflow: hidden` frame.
+   */
+  windowStyle: {
     left: Animated.Value;
     top: Animated.Value;
     width: Animated.Value;
@@ -47,9 +52,18 @@ export interface PipWindow {
     transform: { translateY: Animated.Value }[];
   };
   /**
-   * Attach to the morphing frame. In fullscreen it recognises a downward swipe (→ shrink) but
-   * leaves taps for the call controls; in PiP it owns the drag + tap-to-expand.
+   * The avatar surface: kept at a FIXED full-screen size and only transform-scaled/offset into the
+   * card, so the native render surface is never resized (Android's Filament view is a TextureView,
+   * which is unreliable across live resizes).
    */
+  innerStyle: {
+    left: Animated.Value;
+    top: Animated.Value;
+    width: number;
+    height: number;
+    transform: { scale: Animated.Value }[];
+  };
+  /** Attach to the clip window. Recognises a downward swipe in fullscreen; owns drag + tap-to-expand in PiP. */
   panHandlers: PanResponderInstance['panHandlers'];
   /** Collapse fullscreen → corner card. */
   shrink: () => void;
@@ -61,12 +75,13 @@ const DEFAULT_CORNER: PipCorner = 'tr'; // lands top-right on first shrink
 
 /**
  * Owns the floating-window interaction: fullscreen ⇄ corner morph, drag, and snap-to-nearest-
- * corner. Pure RN — `Animated` for the tween, `PanResponder` for the gesture. The geometry math
- * lives in ./pipGeometry so it can be reasoned about on its own.
+ * corner. The avatar surface is NEVER resized — it stays full-screen and is transform-scaled into
+ * a clipping card, so we don't depend on Android's Filament TextureView tracking a live surface
+ * resize. The geometry math lives in ./pipGeometry so it can be reasoned about alone.
  *
  * All values are JS-driven (`useNativeDriver: false`): the drag feeds `Animated.Value`s from the
- * gesture (which is JS-side anyway), and layout props like width/height can't use the native
- * driver. It animates a single small view, so this is smooth in practice.
+ * gesture, and the width/height on the clip window are layout props that can't use the native
+ * driver. It animates one small view, so this is smooth in practice.
  */
 export function usePipWindow(
   insetsProp?: PipInsetsProp,
@@ -101,44 +116,55 @@ export function usePipWindow(
 
   const [isPip, setIsPip] = useState(false);
 
-  // Animated geometry — fullscreen at rest.
-  const left = useRef(new Animated.Value(0)).current;
-  const top = useRef(new Animated.Value(0)).current;
-  const width = useRef(new Animated.Value(screenW)).current;
-  const height = useRef(new Animated.Value(screenH)).current;
-  const radius = useRef(new Animated.Value(0)).current;
-  // Vertical follow for the fullscreen swipe-down-to-shrink gesture (0 = fully open).
-  const dragY = useRef(new Animated.Value(0)).current;
+  // Clip window (a plain View) — full-screen at rest.
+  const winLeft = useRef(new Animated.Value(0)).current;
+  const winTop = useRef(new Animated.Value(0)).current;
+  const winWidth = useRef(new Animated.Value(screenW)).current;
+  const winHeight = useRef(new Animated.Value(screenH)).current;
+  const winRadius = useRef(new Animated.Value(0)).current;
+  const dragY = useRef(new Animated.Value(0)).current; // fullscreen swipe-down follow
 
-  // Live geometry mirrors (Animated.Value has no synchronous getter) + latest config, read by the
-  // long-lived PanResponder and the resize effect without going stale.
+  // Fixed-size avatar surface — only its position + scale animate (never its width/height).
+  const inLeft = useRef(new Animated.Value(0)).current;
+  const inTop = useRef(new Animated.Value(0)).current;
+  const inScale = useRef(new Animated.Value(1)).current;
+
+  // Live mirrors + latest config, read by the long-lived PanResponder without going stale.
   const pos = useRef({ x: 0, y: 0 });
   const corner = useRef<PipCorner>(DEFAULT_CORNER);
   const pipRef = useRef(false);
   const cfgRef = useRef(cfg);
   cfgRef.current = cfg;
-  // Whether a fullscreen downward swipe is allowed to shrink (host disables e.g. once ended).
   const swipeRef = useRef(true);
   swipeRef.current = opts?.swipeToShrink ?? true;
 
   useEffect(() => {
-    const lx = left.addListener(({ value }) => (pos.current.x = value));
-    const ty = top.addListener(({ value }) => (pos.current.y = value));
+    const lx = winLeft.addListener(({ value }) => (pos.current.x = value));
+    const ty = winTop.addListener(({ value }) => (pos.current.y = value));
     return () => {
-      left.removeListener(lx);
-      top.removeListener(ty);
+      winLeft.removeListener(lx);
+      winTop.removeListener(ty);
     };
-  }, [left, top]);
+  }, [winLeft, winTop]);
 
-  const morph = (to: { x: number; y: number; w: number; h: number; r: number }) => {
+  const morph = (
+    win: { x: number; y: number; w: number; h: number; r: number },
+    inner: { left: number; top: number; scale: number },
+    onDone?: () => void,
+  ) => {
     const ease = Easing.out(Easing.cubic);
+    const t = (v: Animated.Value, toValue: number) =>
+      Animated.timing(v, { toValue, duration: PIP_MORPH_MS, easing: ease, useNativeDriver: false });
     Animated.parallel([
-      Animated.timing(left, { toValue: to.x, duration: PIP_MORPH_MS, easing: ease, useNativeDriver: false }),
-      Animated.timing(top, { toValue: to.y, duration: PIP_MORPH_MS, easing: ease, useNativeDriver: false }),
-      Animated.timing(width, { toValue: to.w, duration: PIP_MORPH_MS, easing: ease, useNativeDriver: false }),
-      Animated.timing(height, { toValue: to.h, duration: PIP_MORPH_MS, easing: ease, useNativeDriver: false }),
-      Animated.timing(radius, { toValue: to.r, duration: PIP_MORPH_MS, easing: ease, useNativeDriver: false }),
-    ]).start();
+      t(winLeft, win.x),
+      t(winTop, win.y),
+      t(winWidth, win.w),
+      t(winHeight, win.h),
+      t(winRadius, win.r),
+      t(inLeft, inner.left),
+      t(inTop, inner.top),
+      t(inScale, inner.scale),
+    ]).start(onDone);
   };
 
   // Kept in refs so the PanResponder (built once) always calls the current versions.
@@ -148,19 +174,19 @@ export function usePipWindow(
     setIsPip(true);
     const c = cfgRef.current;
     const rect = cornerRect(corner.current, c);
-    morph({ x: rect.x, y: rect.y, w: c.pipW, h: c.pipH, r: PIP_RADIUS });
+    const inner = pipInnerTransform(c.screenW, c.screenH, c.pipW, c.pipH, PIP_FOCUS_FRAC);
+    morph({ x: rect.x, y: rect.y, w: c.pipW, h: c.pipH, r: PIP_RADIUS }, inner);
   };
   const expand = () => {
     if (!pipRef.current) return;
     pipRef.current = false;
     setIsPip(false);
     const c = cfgRef.current;
-    morph({ x: 0, y: 0, w: c.screenW, h: c.screenH, r: 0 });
+    morph({ x: 0, y: 0, w: c.screenW, h: c.screenH, r: 0 }, { left: 0, top: 0, scale: 1 });
   };
   const api = useRef({ shrink, expand });
   api.current = { shrink, expand };
-  // Stable public callbacks — they always invoke the latest impl via the ref, so consumers can
-  // depend on them without re-running effects every render.
+  // Stable public callbacks — always invoke the latest impl via the ref.
   const stable = useRef({
     shrink: () => api.current.shrink(),
     expand: () => api.current.expand(),
@@ -168,27 +194,36 @@ export function usePipWindow(
 
   // Reflow on rotation / container resize: refit fullscreen, or re-anchor the current corner.
   useEffect(() => {
+    const c = cfgRef.current;
     if (pipRef.current) {
-      const rect = cornerRect(corner.current, cfgRef.current);
-      left.setValue(rect.x);
-      top.setValue(rect.y);
+      const rect = cornerRect(corner.current, c);
+      const inner = pipInnerTransform(c.screenW, c.screenH, c.pipW, c.pipH, PIP_FOCUS_FRAC);
+      winLeft.setValue(rect.x);
+      winTop.setValue(rect.y);
+      winWidth.setValue(c.pipW);
+      winHeight.setValue(c.pipH);
+      inLeft.setValue(inner.left);
+      inTop.setValue(inner.top);
+      inScale.setValue(inner.scale);
     } else {
-      left.setValue(0);
-      top.setValue(0);
-      width.setValue(screenW);
-      height.setValue(screenH);
+      winLeft.setValue(0);
+      winTop.setValue(0);
+      winWidth.setValue(screenW);
+      winHeight.setValue(screenH);
+      inLeft.setValue(0);
+      inTop.setValue(0);
+      inScale.setValue(1);
     }
-  }, [screenW, screenH, left, top, width, height]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screenW, screenH]);
 
   const dragStart = useRef({ x: 0, y: 0 });
   const pan = useMemo(
     () =>
       PanResponder.create({
-        // Bubbling: child Pressables (the ✕) are asked first, so they keep their taps. The frame
-        // only claims the touch in PiP mode — inert in fullscreen so the call controls work.
+        // Bubbling: child Pressables are asked first, so buttons keep their taps. The clip window
+        // only claims the touch in PiP (drag), or in fullscreen for a downward swipe (to shrink).
         onStartShouldSetPanResponder: () => pipRef.current,
-        // PiP: any drag past a few px. Fullscreen: only a downward-dominant swipe — so taps still
-        // reach the call controls, and only a deliberate pull-down claims the gesture.
         onMoveShouldSetPanResponder: (_e, g) => {
           if (pipRef.current) return Math.abs(g.dx) > 2 || Math.abs(g.dy) > 2;
           return swipeRef.current && g.dy > 8 && g.dy > Math.abs(g.dx);
@@ -199,11 +234,10 @@ export function usePipWindow(
         onPanResponderMove: (_e, g) => {
           if (pipRef.current) {
             const c = clampToScreen(dragStart.current.x + g.dx, dragStart.current.y + g.dy, cfgRef.current);
-            left.setValue(c.x);
-            top.setValue(c.y);
+            winLeft.setValue(c.x);
+            winTop.setValue(c.y);
           } else {
-            // Fullscreen: the surface follows the finger downward as a shrink affordance.
-            dragY.setValue(Math.max(0, g.dy));
+            dragY.setValue(Math.max(0, g.dy)); // fullscreen: surface follows the finger downward
           }
         },
         onPanResponderRelease: (_e, g) => {
@@ -220,8 +254,8 @@ export function usePipWindow(
             corner.current = next;
             const rect = cornerRect(next, c);
             Animated.parallel([
-              Animated.spring(left, { toValue: rect.x, useNativeDriver: false, bounciness: 6, speed: 14 }),
-              Animated.spring(top, { toValue: rect.y, useNativeDriver: false, bounciness: 6, speed: 14 }),
+              Animated.spring(winLeft, { toValue: rect.x, useNativeDriver: false, bounciness: 6, speed: 14 }),
+              Animated.spring(winTop, { toValue: rect.y, useNativeDriver: false, bounciness: 6, speed: 14 }),
             ]).start();
             return;
           }
@@ -242,12 +276,26 @@ export function usePipWindow(
         },
         onPanResponderTerminationRequest: () => false,
       }),
-    [left, top],
+    [winLeft, winTop, dragY],
   );
 
   return {
     isPip,
-    frameStyle: { left, top, width, height, borderRadius: radius, transform: [{ translateY: dragY }] },
+    windowStyle: {
+      left: winLeft,
+      top: winTop,
+      width: winWidth,
+      height: winHeight,
+      borderRadius: winRadius,
+      transform: [{ translateY: dragY }],
+    },
+    innerStyle: {
+      left: inLeft,
+      top: inTop,
+      width: screenW,
+      height: screenH,
+      transform: [{ scale: inScale }],
+    },
     panHandlers: pan.panHandlers,
     shrink: stable.shrink,
     expand: stable.expand,

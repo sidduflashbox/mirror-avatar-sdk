@@ -88,6 +88,10 @@ export const PIP_MAX_WIDTH = 240; // never larger than this (tablets)
 export const PIP_ASPECT = 0.75; // width : height = 3 : 4 (portrait)
 export const PIP_MARGIN = 16; // gap to the screen / safe-area edge
 export const PIP_RADIUS = 22; // corner radius of the little card
+/** The fullscreen surface is never resized for PiP (Android's Filament TextureView is unreliable
+ *  across live resizes) — it's kept full-screen and transform-scaled into the card, centred on this
+ *  fraction of screen height (≈ the head-and-shoulders shot). Tune to move the framing up/down. */
+export const PIP_FOCUS_FRAC = 0.36;
 export const PIP_MORPH_MS = 260; // fullscreen <-> corner size/position tween
 /** A downward swipe on the fullscreen surface past this much travel (px) collapses it to the
  *  corner — the alternative to tapping the ⤡ button. A fast flick shrinks at a shorter distance. */
@@ -95,12 +99,10 @@ export const PIP_SWIPE_SHRINK_DY = 90;
 /** Below this much finger travel (px), a press-and-release on the card counts as a tap → expand,
  *  rather than a drag. */
 export const PIP_TAP_SLOP = 6;
-/** Round shrink (⤡) button on the fullscreen surface. */
-export const PIP_SHRINK_BTN = 36;
-/** Round close (✕) button on the corner card. */
-export const PIP_CLOSE_BTN = 26;
-export const PIP_BTN_BG = 'rgba(0,0,0,0.45)';
-export const PIP_BTN_BORDER = 'rgba(255,255,255,0.15)';
+/** Round shrink (⤡) button on the fullscreen surface. Sized to the badge/timer pill height, and
+ *  it reuses the pill fill + hairline border (PILL_BG / PILL_BORDER) so the top row reads as one
+ *  family rather than a heavier, oversized circle. */
+export const PIP_SHRINK_BTN = 30;
 export const PIP_BORDER = 'rgba(255,255,255,0.12)'; // hairline around the corner card
 
 /** End-of-call summary panel — a frosted `bg-black/40` card. React Native has no

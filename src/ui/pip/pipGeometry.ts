@@ -50,6 +50,36 @@ export function pipSize(cfg: PipSizeConfig): { w: number; h: number } {
   return { w, h };
 }
 
+export interface PipInner {
+  scale: number;
+  left: number;
+  top: number;
+}
+
+/**
+ * How to place the fixed, full-screen avatar surface inside the small corner card *without
+ * resizing it* — the surface stays screenW×screenH and is only transform-scaled, so the native
+ * render swapchain never changes size (Android's Filament TextureView is unreliable across live
+ * resizes).
+ *
+ * The surface is scaled uniformly to the card width and offset vertically so the avatar's focus
+ * point (`focusFrac` of screen height — roughly the head-and-shoulders centre) lands at the card's
+ * middle. The card clips the rest. `scale` is applied about the view centre (React Native's
+ * default), which the left/top offsets already account for.
+ */
+export function pipInnerTransform(
+  screenW: number,
+  screenH: number,
+  pipW: number,
+  pipH: number,
+  focusFrac: number,
+): PipInner {
+  const scale = pipW / screenW;
+  const left = (pipW - screenW) / 2;
+  const top = pipH / 2 - screenH / 2 - scale * (focusFrac * screenH - screenH / 2);
+  return { scale, left, top };
+}
+
 /** The window's top-left corner, in screen px, for a given resting corner. */
 export function cornerRect(corner: PipCorner, cfg: PipFrameConfig): Point {
   const { screenW, screenH, pipW, pipH, margin, insets } = cfg;

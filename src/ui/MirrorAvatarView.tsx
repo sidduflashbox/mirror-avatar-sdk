@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useRef, useState } from 'react';
-import { Animated, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Animated, Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useSharedValue } from 'react-native-worklets-core';
 import { filamentAvatarEngine } from '../engine/filament';
 import type { BakedClip } from '../engine/AvatarEngine';
@@ -15,7 +15,7 @@ import { EndCallSummary } from './EndCallSummary';
 import { MicWaveform } from './MicWaveform';
 import { ReconnectingVeil } from './ReconnectingVeil';
 import { usePipWindow } from './pip/usePipWindow';
-import { CloseButton, ShrinkButton } from './pip/PipButtons';
+import { ShrinkButton } from './pip/PipButtons';
 import {
   AVATAR_BAND_HEIGHT,
   AVATAR_BAND_TOP,
@@ -59,9 +59,9 @@ export interface MirrorAvatarViewProps {
    */
   floating?: boolean;
   /**
-   * Fired when the user removes the floating window with the ✕ on the corner card. The call is
-   * stopped; the host should drop the session / unmount the view in response. Only meaningful when
-   * `floating`.
+   * Optional hook for host-driven dismissal of the floating call. No built-in dismiss control is
+   * shown — the call is ended from the fullscreen controls, and the end-of-call summary drives
+   * navigation. Only meaningful when `floating`.
    */
   onDismiss?: () => void;
 }
@@ -95,7 +95,6 @@ export function MirrorAvatarView({
   style,
   onReady,
   floating = false,
-  onDismiss,
 }: MirrorAvatarViewProps) {
   const clock = useSharedValue(0);
   const clip = useSharedValue<BakedClip | null>(null);
@@ -104,8 +103,6 @@ export function MirrorAvatarView({
 
   const [state, setState] = useState<MirrorSessionState>(session.state);
   const [ended, setEnded] = useState(false);
-  // The user removed the floating card (✕): the overlay hides at once and the host unmounts it.
-  const [dismissed, setDismissed] = useState(false);
   // Snapshotted at the moment of ending so the panel shows a stable value — the live clock
   // stops the instant the socket drops.
   const [finalMs, setFinalMs] = useState<number | null>(null);
@@ -122,20 +119,20 @@ export function MirrorAvatarView({
   // covers everything else. Gated on `startedAt` so a pre-connect failure never flashes a
   // "0:00" panel. Raised identically on status `ended | error`.
   useEffect(() => {
-    if (ended || dismissed) return;
+    if (ended) return;
     if ((state === 'stopped' || state === 'error') && session.startedAt !== null) {
       const durationMs = session.getUsageMs();
       setFinalMs(durationMs);
       setEnded(true);
       onEnded?.({ durationMs });
     }
-  }, [state, ended, dismissed, session, onEnded]);
+  }, [state, ended, session, onEnded]);
 
   // If the call ends while collapsed, bring it back to fullscreen so the end-of-call summary is
   // visible (it can't render in the tiny card).
   useEffect(() => {
-    if (ended && !dismissed && pip.isPip) pip.expand();
-  }, [ended, dismissed, pip.isPip, pip.expand]);
+    if (ended && pip.isPip) pip.expand();
+  }, [ended, pip.isPip, pip.expand]);
 
   // Camera dolly: neutral while connecting, eases in once live, pulls back once ended.
   useEffect(() => {
@@ -180,17 +177,6 @@ export function MirrorAvatarView({
     onEnded?.({ durationMs });
   };
 
-  // ✕ on the corner card: stop the call and hand off to the host to unmount. No summary — the
-  // user asked to remove it.
-  const dismiss = () => {
-    if (dismissed) return;
-    const durationMs = session.getUsageMs();
-    session.stop();
-    setDismissed(true);
-    onEnded?.({ durationMs });
-    onDismiss?.();
-  };
-
   const live = LIVE_STATES.includes(state) && !ended;
   const top = Math.max(16, insets?.top ?? 0);
   // `max(1.5rem, safe-area-inset-bottom)` plus +20 for breathing room on a native screen with
@@ -198,13 +184,14 @@ export function MirrorAvatarView({
   const bottom = Math.max(24, insets?.bottom ?? 0) + 20;
   const side = Math.max(20, insets?.left ?? 0);
 
-  // Collapsed to the corner card: hide all chrome, keep only the live avatar + the ✕.
+  // Collapsed to the corner card: hide all chrome, keep only the live avatar.
   const compact = floating && pip.isPip;
+  // The corner card's border/shadow is iOS-only. On Android those props would sit on the Filament
+  // TextureView's ancestor, and toggling them off as the call expands back to fullscreen blanks the
+  // surface to solid black (a TextureView compositing quirk). Android keeps the rounded clip alone.
+  const iosCardStyle = Platform.OS === 'ios' ? styles.card : undefined;
   // In floating mode the timer shifts left to make room for the ⤡ button in the top-right.
   const timerRight = side + (floating && !ended ? PIP_SHRINK_BTN + 12 : 0);
-
-  // The overlay was removed — render nothing while the host unwinds the session.
-  if (dismissed) return null;
 
   const stageContent = (
     <>
@@ -289,22 +276,20 @@ export function MirrorAvatarView({
     return <View style={[styles.stage, style]}>{stageContent}</View>;
   }
 
-  // Floating: a full-screen box-none layer (taps fall through to the host app), with the morphing
-  // frame the only thing that captures touches. In fullscreen the frame fills the layer; collapsed,
-  // it's the draggable corner card.
+  // Floating: a full-screen box-none layer (taps fall through to the host app). The clip window is
+  // the only thing that captures touches — full-screen when expanded, a corner card when collapsed.
+  // The avatar surface inside stays a FIXED full-screen size and is only transform-scaled, so the
+  // native render surface is never resized (Android's Filament TextureView is unreliable across
+  // live resizes). The card border/shadow is iOS-only — see `iosCardStyle`.
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       <Animated.View
-        style={[
-          styles.floatingFrame,
-          compact && styles.card,
-          pip.frameStyle,
-          style,
-        ]}
+        style={[styles.floatingWindow, compact && iosCardStyle, pip.windowStyle, style]}
         {...pip.panHandlers}
       >
-        {stageContent}
-        {compact && <CloseButton onPress={dismiss} />}
+        <Animated.View style={[styles.floatingInner, pip.innerStyle]}>
+          {stageContent}
+        </Animated.View>
       </Animated.View>
     </View>
   );
@@ -312,12 +297,20 @@ export function MirrorAvatarView({
 
 const styles = StyleSheet.create({
   stage: { flex: 1, backgroundColor: STAGE_BG, overflow: 'hidden' },
-  floatingFrame: {
+  // The clip window: a plain View that resizes/moves and clips the fixed-size surface to a card.
+  floatingWindow: {
     position: 'absolute',
     backgroundColor: STAGE_BG,
     overflow: 'hidden',
   },
-  // Hairline + elevation while collapsed, so the card reads as a distinct floating surface.
+  // The avatar surface host: always full-screen size, only transform-scaled — never resized.
+  floatingInner: {
+    position: 'absolute',
+    backgroundColor: STAGE_BG,
+  },
+  // Hairline + shadow while collapsed, so the card reads as a distinct floating surface. Applied on
+  // iOS only (see `iosCardStyle`): on Android these border/shadow props land on the Filament
+  // TextureView's ancestor and blank it to black when they toggle off on expand.
   card: {
     borderWidth: 1,
     borderColor: PIP_BORDER,
@@ -325,7 +318,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
-    elevation: 12,
   },
   band: {
     position: 'absolute',
