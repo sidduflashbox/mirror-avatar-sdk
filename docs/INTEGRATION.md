@@ -3,6 +3,8 @@
 `mirror-avatar-sdk` adds a **real-time talking 3D avatar** to a React Native app: the
 user speaks, the avatar listens, replies with voice, and lip-syncs — over a live
 WebSocket to the Mirror platform. It runs on **iOS and Android** from one JS API.
+Render it full-screen, or as a draggable **floating (picture-in-picture) window** that
+stays live while the user moves around the rest of your app (see §D-7).
 
 You add a session and a view (~15 lines) and supply one thing the SDK deliberately does
 **not** ship: a `getToken` function that fetches a short-lived session token from *your*
@@ -60,7 +62,7 @@ because CocoaPods (and Gradle) only link the native modules that are present at 
 
 ```bash
 # the SDK — prebuilt tarball straight from GitHub
-npm install https://github.com/sidduflashbox/mirror-avatar-sdk/raw/main/mirror-avatar-sdk-0.1.1.tgz
+npm install https://github.com/sidduflashbox/mirror-avatar-sdk/raw/main/mirror-avatar-sdk-0.2.5.tgz
 
 # native peer deps the SDK needs
 npm install react-native-filament react-native-worklets-core react-native-safe-area-context
@@ -237,10 +239,68 @@ function Screen() {
 **`createSession(options)`** — `agentId?`, `language?` (default `'en'`), `getToken`,
 `onStateChange?`, `onError?`, `onCaption?`. One agent per session; change it by creating a new one.
 
-**`MirrorAvatarView` props** — `session` (required), `agentName?`, `insets?`, `onEnded?`,
-`onBackToAgents?`, `onViewSessionDetails?`, `onReady?`, `style?`.
+**`MirrorAvatarView` props** — `session` (required), `agentName?`, `insets?`, `floating?`
+(in-app picture-in-picture overlay — see §D-7), `onEnded?`, `onBackToAgents?`,
+`onViewSessionDetails?`, `onReady?`, `style?`.
 
-### 7. Build & run
+### 7. Floating (picture-in-picture) mode
+
+Pass the `floating` prop to mount the call as an **in-app overlay** instead of a plain full screen.
+It opens fullscreen; the user can shrink it to a small **draggable corner card** that stays live —
+the face keeps animating and the audio keeps playing — while they use the rest of your app. Every
+gesture lives inside the SDK; your app writes none:
+
+- the **⤡ button** (top-right) or a **downward swipe** collapses the fullscreen call to a corner card;
+- **drag** the card around — it snaps to the nearest of the four corners;
+- **tap** the card to expand it back to fullscreen.
+
+Mount `MirrorAvatarView` at your **app root, above your navigator / tab bar**, so the call survives
+navigation between your own screens. While it floats, the SDK's root is a full-screen `box-none`
+layer: taps outside the little card fall straight through to your app, and only the card itself is
+interactive.
+
+```tsx
+function Shell() {
+  const insets = useSafeAreaInsets();
+  const [inCall, setInCall] = useState(false);
+  const sessionRef = useRef<ReturnType<typeof MirrorSDK.createSession> | null>(null);
+
+  const startCall = () => {
+    const s = MirrorSDK.createSession({ agentId: 'intake', getToken });
+    s.start();
+    sessionRef.current = s;
+    setInCall(true);
+  };
+  const closeMirror = () => {
+    sessionRef.current?.stop();
+    sessionRef.current = null;
+    setInCall(false);
+  };
+
+  return (
+    <View style={{ flex: 1 }}>
+      {/* …your tabs / navigator / app screens… */}
+
+      {inCall && sessionRef.current && (
+        <MirrorAvatarView
+          session={sessionRef.current}
+          agentName="Intake Assistant"
+          insets={insets}
+          floating                      // ← in-app floating / picture-in-picture overlay
+          onBackToAgents={closeMirror}   // end-of-call summary → back to your app
+          onEnded={(info) => console.log('[mirror] ended, durationMs=', info.durationMs)}
+        />
+      )}
+    </View>
+  );
+}
+```
+
+A floating call is ended exactly like a fullscreen one — the red **End** control, then **Back** on
+the end-of-call summary (`onBackToAgents`). Omit `floating` and `MirrorAvatarView` fills its parent,
+as in §D-6.
+
+### 8. Build & run
 
 Do a **full native rebuild** (not a Metro reload) — the native modules from Steps 1 & 3 have to be
 compiled into the app binary:
@@ -260,6 +320,7 @@ Grant the mic prompt, tap the button, speak — the avatar replies and lip-syncs
 | Decide when to start/close a session | Mic capture, streaming, playback, lip-sync, reconnect |
 | Supply `getToken` (your backend holds the org key) | Opens the WS with the token; re-mints on reconnect |
 | Provide `insets`, render `MirrorAvatarView` | Avatar, captions, call controls, end-of-call summary |
+| Mount at root for `floating` mode | Floating/PiP window + its shrink · drag · expand gestures |
 | Close from `onBackToAgents` | Downloads + caches the model; owns the backend URL |
 
 ## F. Troubleshooting
