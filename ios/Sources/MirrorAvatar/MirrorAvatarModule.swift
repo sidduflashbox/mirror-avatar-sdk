@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import React
+import UIKit
 
 /// Native module exposing audio (playback, and the listen / barge-in loop) to
 /// JavaScript. An RCTEventEmitter so the loop can push events
@@ -106,6 +107,29 @@ final class MirrorAvatarModule: RCTEventEmitter {
 
   @objc func stopPlayback() {
     listenEngine.stopLivePlayback()
+  }
+
+  // MARK: - Screen sleep
+
+  /// Hold the display awake while the avatar is on screen. A call is watched rather than
+  /// touched, so the idle timer would otherwise sleep the screen mid-conversation. The SDK
+  /// owns this so the host app needs no keep-awake dependency of its own.
+  ///
+  /// No app-state bookkeeping is needed: iOS applies the idle timer only to the foreground
+  /// app, so backgrounding lapses it and returning re-applies it.
+  @objc func setKeepAwake(_ enabled: Bool) {
+    DispatchQueue.main.async {
+      UIApplication.shared.isIdleTimerDisabled = enabled
+    }
+  }
+
+  /// A JS reload or bridge teardown skips the view's unmount, which would otherwise leave the
+  /// screen pinned awake for the rest of the process.
+  override func invalidate() {
+    DispatchQueue.main.async {
+      UIApplication.shared.isIdleTimerDisabled = false
+    }
+    super.invalidate()
   }
 }
 

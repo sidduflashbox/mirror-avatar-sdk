@@ -6,6 +6,7 @@ import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.util.Base64
 import android.util.Log
+import android.view.WindowManager
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -133,6 +134,29 @@ class MirrorAvatarModule(reactContext: ReactApplicationContext) :
     emit("onChunkStarted", Arguments.createMap().apply { putInt("seq", seq) })
   }
 
+  // ----- screen sleep -----
+
+  /**
+   * Hold the display awake while the avatar is on screen. A call is watched rather than
+   * touched, so the display timeout would otherwise sleep the screen mid-conversation. The SDK
+   * owns this so the host app needs no keep-awake dependency of its own, and it stays in
+   * lockstep with the iOS `setKeepAwake`.
+   *
+   * No app-state bookkeeping is needed: FLAG_KEEP_SCREEN_ON is scoped to a visible window, so
+   * it lapses while the host is backgrounded and applies again when it returns.
+   */
+  @ReactMethod
+  fun setKeepAwake(enabled: Boolean) {
+    val activity = getCurrentActivity() ?: return
+    activity.runOnUiThread {
+      if (enabled) {
+        activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+      } else {
+        activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+      }
+    }
+  }
+
   // ----- helpers -----
 
   /** Runs [granted] once RECORD_AUDIO is held, requesting it first if needed. */
@@ -169,6 +193,9 @@ class MirrorAvatarModule(reactContext: ReactApplicationContext) :
   // ----- lifecycle -----
 
   override fun invalidate() {
+    // A JS reload or bridge teardown skips the view's unmount, which would otherwise leave the
+    // window flag set for the rest of the activity's life.
+    setKeepAwake(false)
     stopAudio()
     engine.release()
     super.invalidate()

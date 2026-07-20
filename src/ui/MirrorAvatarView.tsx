@@ -14,6 +14,7 @@ import { CallControls } from './CallControls';
 import { EndCallSummary } from './EndCallSummary';
 import { MicWaveform } from './MicWaveform';
 import { ReconnectingVeil } from './ReconnectingVeil';
+import { useKeepAwake } from './useKeepAwake';
 import { usePipWindow } from './pip/usePipWindow';
 import { ShrinkButton } from './pip/PipButtons';
 import {
@@ -111,6 +112,11 @@ export function MirrorAvatarView({
   // (rules of hooks); its output is only wired in when `floating`. Swipe-to-shrink is disabled
   // once the call ends so the end-of-call summary can't be flung away.
   const pip = usePipWindow(insets, { swipeToShrink: !ended });
+
+  // The avatar is on screen for this view's whole mounted life — through the model load, the
+  // call itself, the corner window, and the end-of-call summary — and none of it takes touch
+  // input, so the display must not sleep out from under it. Released on unmount.
+  useKeepAwake();
 
   useEffect(() => session.subscribe({ onState: setState }), [session]);
 

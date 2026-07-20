@@ -11,5 +11,6 @@ RCT_EXTERN_METHOD(startLiveCapture)
 RCT_EXTERN_METHOD(stopLiveCapture)
 RCT_EXTERN_METHOD(enqueueAudioChunk:(NSString *)base64 seq:(nonnull NSNumber *)seq)
 RCT_EXTERN_METHOD(stopPlayback)
+RCT_EXTERN_METHOD(setKeepAwake:(BOOL)enabled)
 
 @end
