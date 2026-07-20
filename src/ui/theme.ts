@@ -117,7 +117,7 @@ export const SUMMARY_AGENT_COLOR = 'rgba(255,255,255,0.35)'; // text-white/35
 /** Primary "View session details" pill — `linear-gradient(135deg, #0088ff, #38a5ff)`. */
 export const SUMMARY_ACCENT_GRADIENT = 'linear-gradient(135deg, #0088ff, #38a5ff)';
 export const SUMMARY_ACCENT_GLOW = 'rgba(0,136,255,0.3)';
-/** Secondary "Back to agents" pill — `border-white/15 bg-white/[0.06]`. */
+/** Secondary "Back" pill — `border-white/15 bg-white/[0.06]`. */
 export const SUMMARY_SECONDARY_BG = 'rgba(255,255,255,0.06)';
 export const SUMMARY_SECONDARY_BORDER = 'rgba(255,255,255,0.15)';
 export const SUMMARY_SECONDARY_TEXT = 'rgba(255,255,255,0.75)'; // text-white/75

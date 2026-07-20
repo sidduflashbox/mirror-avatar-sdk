@@ -62,7 +62,7 @@ because CocoaPods (and Gradle) only link the native modules that are present at 
 
 ```bash
 # the SDK — prebuilt tarball straight from GitHub
-npm install https://github.com/sidduflashbox/mirror-avatar-sdk/raw/main/mirror-avatar-sdk-0.2.5.tgz
+npm install https://github.com/sidduflashbox/mirror-avatar-sdk/raw/main/mirror-avatar-sdk-0.2.6.tgz
 
 # native peer deps the SDK needs
 npm install react-native-filament react-native-worklets-core react-native-safe-area-context

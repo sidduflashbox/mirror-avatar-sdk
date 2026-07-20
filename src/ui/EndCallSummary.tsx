@@ -82,7 +82,7 @@ export function EndCallSummary({
             <Pressable
               onPress={onBackToAgents}
               accessibilityRole="button"
-              accessibilityLabel="Back to agents"
+              accessibilityLabel="Back"
               style={({ pressed }) => [
                 styles.pill,
                 styles.pillSecondary,
@@ -90,7 +90,7 @@ export function EndCallSummary({
               ]}
             >
               <ArrowLeftGlyph />
-              <Text style={styles.pillSecondaryText}>Back to agents</Text>
+              <Text style={styles.pillSecondaryText}>Back</Text>
             </Pressable>
           )}
         </View>
