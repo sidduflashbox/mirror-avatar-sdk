@@ -76,7 +76,7 @@ CocoaPods (and Gradle) only link the native modules that are present at pod/buil
 
 ```bash
 # the SDK — prebuilt tarball straight from GitHub
-npm install https://github.com/sidduflashbox/mirror-avatar-sdk/raw/main/mirror-avatar-sdk-1.0.1.tgz
+npm install https://github.com/Mirrorr-AI/mirrorr-avatar-sdk-rn/raw/main/mirror-avatar-sdk-1.0.1.tgz
 ```
 
 **React Native CLI**
