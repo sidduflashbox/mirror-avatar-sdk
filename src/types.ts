@@ -130,14 +130,13 @@ export interface MirrorViewBinding {
 export type MirrorTokenReason = 'start' | 'reconnect' | 'proactive';
 
 /** Passed to {@link MirrorSessionOptions.getToken} so the consumer's backend can mint the
- *  right session token. `agentId` / `language` are the values given to `createSession`;
- *  `sessionId` is the server session captured from a prior token result, echoed back on
- *  `reconnect` / `proactive` so the backend can RESUME the same session (the agent keeps its
- *  conversation) instead of minting a fresh one. */
+ *  right session token. `agentSlug` is the value given to `createSession`; `sessionId` is the
+ *  server session captured from a prior token result, echoed back on `reconnect` / `proactive`
+ *  so the backend can RESUME the same session (the agent keeps its conversation) instead of
+ *  minting a fresh one. */
 export interface MirrorTokenContext {
   reason: MirrorTokenReason;
-  agentId?: string;
-  language?: string;
+  agentSlug?: string;
   sessionId?: string;
 }
 
@@ -155,10 +154,7 @@ export interface MirrorTokenResult {
 export interface MirrorSessionOptions {
   /** Which agent to talk to. Forwarded to `getToken` so YOUR backend selects it at session
    *  init. The SDK is one-agent-per-session; change it by creating a new session. */
-  agentId?: string;
-  /** Language for the session (server code / BCP-47), forwarded to `getToken` for init.
-   *  Defaults to `'en'` when omitted, so `getToken` always receives a concrete language. */
-  language?: string;
+  agentSlug?: string;
   /** Mint a short-lived session token against YOUR backend (which holds the API key). Called
    *  on start, on every reconnect (with `sessionId` set, for resume), and proactively before
    *  the token expires. Return the token string, or a {@link MirrorTokenResult} to enable

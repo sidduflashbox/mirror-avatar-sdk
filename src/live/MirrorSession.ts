@@ -19,10 +19,6 @@ import type {
 // shipped; to point at one, inject a transport via `createSession(opts, { transport })`.
 const LIVE_WS_URL = 'wss://platform.mirrorr.ai/api/v1/ws/session';
 
-// Applied when the consumer doesn't pass `language`, so getToken always receives a concrete
-// language. Override per session with MirrorSessionOptions.language.
-const DEFAULT_LANGUAGE = 'en';
-
 // `getToken` is the consumer's own code, so its network timeout is unknown — and a device's TCP
 // connect to an unreachable host is not refused, it hangs until the OS gives up (a minute or
 // more on iOS). Cap it so the user learns the call failed while they are still watching the
@@ -184,8 +180,7 @@ export class MirrorSession {
           Promise.resolve(
             this.opts.getToken({
               reason: ctx.reason,
-              agentId: this.opts.agentId,
-              language: this.opts.language ?? DEFAULT_LANGUAGE,
+              agentSlug: this.opts.agentSlug,
               sessionId: this._sessionId,
             }),
           ),

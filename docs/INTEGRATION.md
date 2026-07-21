@@ -39,7 +39,7 @@ import { MirrorSDK, MirrorAvatarView } from 'mirror-avatar-sdk';
    backend**, which holds your **Mirror org API key**. The key must **never** live in the app.
    See §D-5.
 3. **Provisioning on the Mirror platform** — the SDK connects to Mirror's production backend, so
-   you need an **org API key**, and the **agent(s)** you name in `agentId` must exist for your org.
+   you need an **org API key**, and the **agent(s)** you name in `agentSlug` must exist for your org.
    This is arranged with Mirror, out of band; it is not a code step.
 4. **Safe-area insets** — `MirrorAvatarView` takes an `insets` prop rather than depending on a
    safe-area library itself. Use `react-native-safe-area-context` (or pass constants).
@@ -75,7 +75,7 @@ CocoaPods (and Gradle) only link the native modules that are present at pod/buil
 
 ```bash
 # the SDK — prebuilt tarball straight from GitHub
-npm install https://github.com/sidduflashbox/mirror-avatar-sdk/raw/main/mirror-avatar-sdk-0.2.6.tgz
+npm install https://github.com/sidduflashbox/mirror-avatar-sdk/raw/main/mirror-avatar-sdk-1.0.0.tgz
 ```
 
 **React Native CLI**
@@ -282,8 +282,9 @@ For **session resume + proactive refresh**, return an object instead of a bare s
 ```ts
 return { token, sessionId, expiresInMs };  // MirrorTokenResult
 ```
-`getToken` receives `{ reason, agentId?, language?, sessionId? }` so your backend can select the
-agent and resume the same session on reconnect.
+`getToken` receives `{ reason, agentSlug?, sessionId? }` so your backend can select the agent
+and resume the same session on reconnect. Language is chosen by your backend at session init,
+not by the app.
 
 > **Dev vs prod transport:** a token server on a **LAN IP over `http://`** works during local
 > testing (iOS local-networking + Android debug cleartext). A **release** build blocks cleartext
@@ -318,9 +319,8 @@ function Screen() {
 
   const startCall = () => {
     const s = MirrorSDK.createSession({
-      agentId: 'intake',                 // must exist for your org
+      agentSlug: 'intake',                 // must exist for your org
       getToken,
-      language: 'en',                    // optional; defaults to 'en'
       onStateChange: (state) => console.log('[mirror] state:', state),
       onError: (err) => console.warn('[mirror] error:', err.code, err.message),
     });
@@ -358,7 +358,7 @@ function Screen() {
 }
 ```
 
-**`createSession(options)`** — `agentId?`, `language?` (default `'en'`), `getToken`,
+**`createSession(options)`** — `agentSlug?`, `getToken`,
 `onStateChange?`, `onError?`, `onCaption?`. One agent per session; change it by creating a new one.
 
 **`MirrorAvatarView` props** — `session` (required), `agentName?`, `insets?`, `floating?`
@@ -393,7 +393,7 @@ function Shell() {
   const sessionRef = useRef<ReturnType<typeof MirrorSDK.createSession> | null>(null);
 
   const startCall = () => {
-    const s = MirrorSDK.createSession({ agentId: 'intake', getToken });
+    const s = MirrorSDK.createSession({ agentSlug: 'intake', getToken });
     s.start();
     sessionRef.current = s;
     setInCall(true);

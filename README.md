@@ -7,7 +7,7 @@ from one small JS API. Runs on **iOS and Android**.
 ```tsx
 import { MirrorSDK, MirrorAvatarView } from 'mirror-avatar-sdk';
 
-const session = MirrorSDK.createSession({ agentId: 'intake', getToken });
+const session = MirrorSDK.createSession({ agentSlug: 'intake', getToken });
 session.start();
 
 <MirrorAvatarView session={session} insets={insets} onBackToAgents={() => session.stop()} />
