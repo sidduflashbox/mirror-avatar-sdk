@@ -26,17 +26,24 @@ session.start();
 ## Requirements
 
 - React Native >= 0.73 (validated on RN 0.86 / React 19.2)
+- iOS >= 15.0; Android `minSdkVersion` >= 24
 - Peer dependencies: `react-native-filament` (>=1.11), `react-native-worklets-core` (>=1.6)
 - A backend that mints short-lived session tokens (see below) — the SDK never
   holds your API key.
 
 ## Install
 
+The SDK is not on a public registry — install the prebuilt tarball from GitHub.
+
 ```bash
-npm install mirror-avatar-sdk
+npm install https://github.com/sidduflashbox/mirror-avatar-sdk/raw/main/mirror-avatar-sdk-1.0.1.tgz
 npm install react-native-filament react-native-worklets-core react-native-safe-area-context
 npx pod-install ios
 ```
+
+Worklets also needs Babel configuration, and Expo needs `expo prebuild` rather than
+Expo Go. Both are covered in [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — the
+install above is not sufficient on its own.
 
 ## Your app provides one thing: `getToken`
 
