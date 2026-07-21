@@ -75,9 +75,12 @@ Install the SDK **and** its native peer deps **first — before the native steps
 CocoaPods (and Gradle) only link the native modules that are present at pod/build time.
 
 ```bash
-# the SDK — prebuilt tarball straight from GitHub
-npm install https://github.com/Mirrorr-AI/mirrorr-avatar-sdk-rn/raw/main/mirror-avatar-sdk-1.0.1.tgz
+# the SDK — prebuilt tarball from Mirror's CDN
+npm install https://mirrorr.blr1.cdn.digitaloceanspaces.com/sdk/mirror-avatar/1.0.1/mirror-avatar-sdk-1.0.1.tgz
 ```
+
+The URL is version-pinned, so upgrading means changing `1.0.1` in the path — an existing
+install is never silently replaced.
 
 **React Native CLI**
 ```bash
