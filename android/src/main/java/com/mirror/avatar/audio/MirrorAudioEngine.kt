@@ -155,6 +155,7 @@ class MirrorAudioEngine(private val context: Context) {
     listener?.onListeningStarted()
     startLiveCaptureLoop()
     startLiveClock()
+    return null // capturing
   }
 
   fun stopLiveCapture() {
