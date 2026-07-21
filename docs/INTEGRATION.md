@@ -51,7 +51,8 @@ import { MirrorSDK, MirrorAvatarView } from 'mirror-avatar-sdk';
 
 - **iOS and Android** (both shipping).
 - **React Native >= 0.73** (peer dependency). Validated on **RN 0.86 / React 19.2**.
-- CocoaPods (iOS); Android `minSdkVersion` **>= 24**.
+- CocoaPods (iOS); iOS deployment target **>= 15.0** (the podspec declares it, so a lower target
+  fails at `pod install`); Android `minSdkVersion` **>= 24**.
 - **Expo:** supported via `expo prebuild` / dev client / EAS Build. Validated on **Expo SDK 57**
   (which ships RN 0.86 / React 19.2.3). **Expo Go is not supported** — it runs a fixed native
   binary and cannot load the SDK's iOS xcframework or Android Kotlin module. No Expo config plugin
@@ -361,9 +362,24 @@ function Screen() {
 **`createSession(options)`** — `agentSlug?`, `getToken`,
 `onStateChange?`, `onError?`, `onCaption?`. One agent per session; change it by creating a new one.
 
+**Session methods.** `MirrorAvatarView` drives the call on its own, so most apps only need
+`start()` and `stop()`. The rest are there for hosts that build their own chrome or need the
+numbers:
+
+| Method | What it does |
+|---|---|
+| `start()` | Opens the mic, then the socket. Awaiting it is optional. |
+| `stop()` | Ends the call and releases the mic. |
+| `mute(muted: boolean)` | Mutes the mic. Silence still goes up the wire, so the server's VAD can still close an open turn — muting mid-sentence does not strand it. |
+| `dispose()` | Releases everything and drops all listeners. Call it if you abandon a session without `stop()`. |
+| `subscribe(listener)` | State / caption / error callbacks for your own UI, in addition to the `createSession` options. Returns an unsubscribe function, and replays the current state immediately. |
+| `getUsageMs()` | Connected time in ms. Banked — it freezes when the socket drops and resumes without resetting. |
+| `setToken(token)` | A static token instead of `getToken`. No resume and no proactive refresh, so `getToken` is preferred. |
+
 **`MirrorAvatarView` props** — `session` (required), `agentName?`, `insets?`, `floating?`
 (in-app picture-in-picture overlay — see §D-7), `onEnded?`, `onBackToAgents?`,
-`onViewSessionDetails?`, `onReady?`, `style?`.
+`onViewSessionDetails?`, `onReady?`, `onDismiss?` (host-driven dismissal of a floating call;
+only meaningful with `floating`), `style?`.
 
 The SDK holds the **screen awake** for as long as `MirrorAvatarView` is mounted (a call is watched,
 not touched) and releases it on unmount — your app needs no keep-awake dependency.
@@ -494,10 +510,11 @@ Grant the mic prompt, tap the button, speak — the avatar replies and lip-syncs
   cached copy for an unchanged version.
 - **No `console.log` in the Metro terminal** (RN 0.76+ on a physical device) → logs go to React
   Native DevTools / device syslog (`adb logcat` on Android), not the terminal.
-
-**React Native CLI only**
-
-- **`pod install` crashes (`Encoding::CompatibilityError`)** → prefix `LANG=en_US.UTF-8`.
+- **`pod install` crashes with `Unicode Normalization not appropriate for ASCII-8BIT`
+  (`Encoding::CompatibilityError`)** → Ruby has no UTF-8 locale. Export it before building:
+  `export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8` (or add both to your shell profile). This hits
+  **Expo too** — `expo run:ios` shells out to `pod install` and inherits the same environment, so
+  running `pod install` by hand in a shell that has the locale set is not enough.
 
 **Expo only**
 
