@@ -36,7 +36,7 @@ session.start();
 The SDK is not on a public registry — install the prebuilt tarball from GitHub.
 
 ```bash
-npm install https://github.com/sidduflashbox/mirror-avatar-sdk/raw/main/mirror-avatar-sdk-1.0.1.tgz
+npm install https://github.com/Mirrorr-AI/mirrorr-avatar-sdk-rn/raw/main/mirror-avatar-sdk-1.0.1.tgz
 npm install react-native-filament react-native-worklets-core react-native-safe-area-context
 npx pod-install ios
 ```

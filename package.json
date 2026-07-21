@@ -11,11 +11,11 @@
   "author": "Flashbox",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sidduflashbox/mirror-avatar-sdk.git"
+    "url": "git@github.com:Mirrorr-AI/mirrorr-avatar-sdk-rn.git"
   },
-  "homepage": "https://github.com/sidduflashbox/mirror-avatar-sdk#readme",
+  "homepage": "https://github.com/Mirrorr-AI/mirrorr-avatar-sdk-rn#readme",
   "bugs": {
-    "url": "https://github.com/sidduflashbox/mirror-avatar-sdk/issues"
+    "url": "https://github.com/Mirrorr-AI/mirrorr-avatar-sdk-rn/issues"
   },
   "scripts": {
     "prepare": "bob build",
