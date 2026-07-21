@@ -99,9 +99,15 @@ export type MirrorAvatarErrorCode =
 
 export type MirrorAvatarError = {
   code: MirrorAvatarErrorCode;
+  /** Human-readable and safe to show a user. Never empty. */
   message: string;
   recoverable: boolean;
   nativeCode?: string;
+  /**
+   * The underlying cause, for logs and support — e.g. the thrown `getToken` error. Never shown
+   * by the SDK's own UI, which renders `message`.
+   */
+  detail?: string;
 };
 
 // ── Live session facade (mirror-avatar-sdk public API) ──────────────────────

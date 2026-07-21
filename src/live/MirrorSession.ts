@@ -22,11 +22,85 @@ const LIVE_WS_URL = 'wss://platform.mirrorr.ai/api/v1/ws/session';
 // language. Override per session with MirrorSessionOptions.language.
 const DEFAULT_LANGUAGE = 'en';
 
+// `getToken` is the consumer's own code, so its network timeout is unknown — and a device's TCP
+// connect to an unreachable host is not refused, it hangs until the OS gives up (a minute or
+// more on iOS). Cap it so the user learns the call failed while they are still watching the
+// screen, rather than staring at an avatar that will never speak.
+const TOKEN_TIMEOUT_MS = 10000;
+
+/** Rejects with `reason` if `p` has not settled within `ms`. Never leaves the timer running. */
+function withTimeout<T>(p: Promise<T>, ms: number, reason: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(reason)), ms);
+    p.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 interface Emitter {
   addListener: (
     name: string,
     cb: (e: any) => void,
   ) => { remove: () => void };
+}
+
+/**
+ * Native audio codes → the public error surface. Without this every native fault arrived as
+ * `unknown`, so a consumer could not tell "another app is holding the mic" (expected, and the
+ * user can act on it) from a genuine engine fault.
+ *
+ * `recoverable` is honest: only the cases the SDK actually resumes from on its own are true —
+ * contention clears when the other app releases the mic, and an interruption ends. A denied
+ * permission or a broken engine does not fix itself.
+ */
+const NATIVE_ERRORS: Record<
+  string,
+  { code: MirrorAvatarError['code']; recoverable: boolean; message: string }
+> = {
+  mic_permission_denied: {
+    code: 'permission_denied',
+    recoverable: false,
+    message: 'Microphone permission denied',
+  },
+  mic_unavailable: {
+    code: 'audio_capture_failed',
+    recoverable: true,
+    message: 'Microphone in use by another app',
+  },
+  mic_interrupted: {
+    code: 'audio_capture_failed',
+    recoverable: true,
+    message: 'Microphone taken by another app',
+  },
+  engine_failed: {
+    code: 'audio_capture_failed',
+    recoverable: false,
+    message: 'Audio unavailable',
+  },
+  bad_audio: {
+    code: 'audio_playback_failed',
+    recoverable: true,
+    message: 'Audio playback failed',
+  },
+};
+
+/** Maps a native code to a typed error, falling back to `unknown` for anything unrecognised. */
+function nativeError(nativeCode?: string): MirrorAvatarError {
+  const known = nativeCode ? NATIVE_ERRORS[nativeCode] : undefined;
+  return {
+    code: known?.code ?? 'unknown',
+    message: known?.message ?? nativeCode ?? 'native audio error',
+    recoverable: known?.recoverable ?? true,
+    nativeCode,
+  };
 }
 
 /** Injectable seams — production uses the real RN native module + WebSocket. */
@@ -72,6 +146,13 @@ export class MirrorSession {
   private _sessionId: string | undefined;
 
   private listeners = new Set<MirrorSessionListener>();
+  /**
+   * The last error raised, replayed to anything that subscribes afterwards. The host mounts the
+   * view AFTER calling start(), so a fast failure — a wrong token-server address refuses the
+   * connection in milliseconds — is raised before the view's chrome has subscribed. Without a
+   * retained copy that error is emitted into an empty room and the call fails silently.
+   */
+  private lastError: MirrorAvatarError | null = null;
   private _state: MirrorSessionState = 'idle';
   private _muted = false;
 
@@ -93,17 +174,23 @@ export class MirrorSession {
       stopFace: () => this.view?.stopFace(),
       onState: (state) => this.handleState(state),
       onCaption: (caption) => this.emit((l) => l.onCaption?.(caption)),
-      onError: (error) => this.emit((l) => l.onError?.(error)),
+      onError: (error) => this.raise(error),
       connectionProvider: async (ctx) => {
         if (!this.opts.getToken) {
           return this.token ? { token: this.token } : null;
         }
-        const raw = await this.opts.getToken({
-          reason: ctx.reason,
-          agentId: this.opts.agentId,
-          language: this.opts.language ?? DEFAULT_LANGUAGE,
-          sessionId: this._sessionId,
-        });
+        const raw = await withTimeout(
+          Promise.resolve(
+            this.opts.getToken({
+              reason: ctx.reason,
+              agentId: this.opts.agentId,
+              language: this.opts.language ?? DEFAULT_LANGUAGE,
+              sessionId: this._sessionId,
+            }),
+          ),
+          TOKEN_TIMEOUT_MS,
+          `getToken timed out after ${TOKEN_TIMEOUT_MS}ms`,
+        );
         const result = typeof raw === 'string' ? { token: raw } : raw;
         if (!result || !result.token) return null;
         // Capture the session id for the next resume; keep the prior one if this mint
@@ -143,9 +230,16 @@ export class MirrorSession {
     );
   }
 
-  /** The packaged chrome subscribes here; returns an unsubscribe. */
+  /**
+   * The packaged chrome subscribes here; returns an unsubscribe.
+   *
+   * Current state and any outstanding error are delivered immediately, so a listener that
+   * arrives late still sees them — see [lastError].
+   */
   subscribe(listener: MirrorSessionListener): () => void {
     this.listeners.add(listener);
+    listener.onState?.(this._state);
+    if (this.lastError) listener.onError?.(this.lastError);
     return () => {
       this.listeners.delete(listener);
     };
@@ -181,6 +275,8 @@ export class MirrorSession {
     // Fresh call → new session. Clear any id left from a prior run so `reason:'start'`
     // never carries a stale sessionId.
     this._sessionId = undefined;
+    // A retry must not replay the previous attempt's failure to the new view.
+    this.lastError = null;
     this.subs = [
       this.emitter.addListener('onAudioFrame', (e: { base64: string }) => {
         const frame = base64ToArrayBuffer(e.base64);
@@ -196,17 +292,24 @@ export class MirrorSession {
         this.session.onChunkStarted(e.seq),
       ),
       this.emitter.addListener('onError', (e: { code?: string }) =>
-        this.emit((l) =>
-          l.onError?.({
-            code: 'unknown',
-            message: e?.code ?? 'native audio error',
-            recoverable: true,
-            nativeCode: e?.code,
-          }),
-        ),
+        this.raise(nativeError(e?.code)),
       ),
     ];
-    this.native?.startLiveCapture?.();
+
+    // The mic must be open BEFORE the socket is. Starting them in parallel produced a connected,
+    // billing session the user could not be heard in — the avatar greeted an audience of nobody.
+    // Optional-chained so an older native build (no promise, returns undefined) still starts.
+    try {
+      await this.native?.startLiveCapture?.();
+    } catch (e) {
+      this.teardownSubs();
+      this.started = false;
+      const error = nativeError((e as { code?: string } | undefined)?.code);
+      this.handleState('error');
+      this.raise(error);
+      return;
+    }
+
     await this.session.start();
   }
 
@@ -215,9 +318,13 @@ export class MirrorSession {
     this.started = false;
     this.session.stop();
     this.native?.stopLiveCapture?.();
+    this.teardownSubs();
+    this.micLevel.current = 0;
+  }
+
+  private teardownSubs(): void {
     this.subs.forEach((sub) => sub.remove());
     this.subs = [];
-    this.micLevel.current = 0;
   }
 
   dispose(): void {
@@ -230,6 +337,9 @@ export class MirrorSession {
   private handleState(state: MirrorSessionState): void {
     this._state = state;
     if (state === 'listening' || state === 'speaking') {
+      // The call is live, so whatever failed before no longer applies — drop it rather than
+      // replaying a stale failure into the next listener that subscribes.
+      this.lastError = null;
       if (this.segStart === null) this.segStart = this.now();
       if (this._startedAt === null) this._startedAt = this.now();
     } else if (
@@ -252,6 +362,12 @@ export class MirrorSession {
       this.usageMs += this.now() - this.segStart;
       this.segStart = null;
     }
+  }
+
+  /** Raise an error: retained for late subscribers, then delivered to current ones. */
+  private raise(error: MirrorAvatarError): void {
+    this.lastError = error;
+    this.emit((l) => l.onError?.(error));
   }
 
   private emit(fn: (listener: MirrorSessionListener) => void): void {

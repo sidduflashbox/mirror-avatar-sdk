@@ -28,6 +28,25 @@ interface PendingChunk {
   timer: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * Turn whatever `getToken` threw into a short line fit for the screen.
+ *
+ * One message for every cause, deliberately. React Native's fetch reports "Network request
+ * failed" identically whether the device is offline, the token server is down, or its address is
+ * wrong — so claiming "No internet connection" would be a guess, and wrong whenever the user's
+ * connection is fine. "Cannot connect to Mirror" is true in all three cases. The original text
+ * survives in `detail` for logs and support.
+ */
+function tokenFetchError(e: unknown): MirrorAvatarError {
+  return {
+    code: 'socket_connection_failed',
+    message: 'Cannot connect to Mirror',
+    recoverable: true,
+    detail:
+      e instanceof Error ? `${e.name}: ${e.message}` : String(e ?? 'unknown error'),
+  };
+}
+
 export interface MirrorLiveSessionDeps {
   enqueueAudioChunk: (pcmBase64: string, seq: number) => void;
   stopPlayback: () => void;
@@ -202,19 +221,16 @@ export class MirrorLiveSession {
       token = await this.deps.connectionProvider({ reason: 'start' });
     } catch (e) {
       this.deps.onState('error');
-      this.deps.onError({
-        code: 'socket_connection_failed',
-        message: String(e),
-        recoverable: true,
-      });
+      this.deps.onError(tokenFetchError(e));
       return;
     }
     if (!token) {
       this.deps.onState('error');
       this.deps.onError({
         code: 'socket_connection_failed',
-        message: 'no token',
+        message: 'Cannot connect to Mirror',
         recoverable: false,
+        detail: 'getToken returned no token',
       });
       return;
     }
@@ -248,8 +264,9 @@ export class MirrorLiveSession {
       this.deps.onState('error');
       this.deps.onError({
         code: 'socket_connection_failed',
-        message: 'rejected (4001)',
+        message: 'Session not authorised',
         recoverable: false,
+        detail: 'socket closed 4001 — token rejected',
       });
       return;
     }
@@ -259,8 +276,9 @@ export class MirrorLiveSession {
       this.deps.onState('error');
       this.deps.onError({
         code: 'socket_connection_failed',
-        message: 'reconnect failed',
+        message: 'Connection lost',
         recoverable: false,
+        detail: `reconnect gave up after ${attempt - 1} attempts`,
       });
       return;
     }

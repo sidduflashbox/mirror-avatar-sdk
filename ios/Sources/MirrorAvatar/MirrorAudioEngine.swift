@@ -147,10 +147,18 @@ final class MirrorAudioEngine {
   /// Poll cadence. Blendshapes are 60 fps (16.7 ms), so 5 ms is ample.
   private let liveClockIntervalMs = 5
 
+  /// Settled exactly once, by the first `configureAndStartLive` outcome: `nil` on success, a
+  /// native error code on failure. Held so the caller can await the real result — the cold-start
+  /// retry re-enters `configureAndStartLive`, and a failure there must not settle it twice.
+  private var liveStartCompletion: ((String?) -> Void)?
+
   /// Begin continuous capture for a live session: stream mic PCM up (16k mono int16,
   /// base64) via the delegate; do NOT run the local VAD/playback (the server owns
   /// turn-taking + barge-in). Reuses the exact voice-processing + AEC config.
-  func startLiveCapture() {
+  ///
+  /// `completion` reports whether the mic actually opened, so the caller can refuse to start a
+  /// session it cannot be heard in. It fires on the engine queue.
+  func startLiveCapture(completion: @escaping (String?) -> Void) {
     // Mirror the local start() path: this is often the first mic access, so request
     // permission; and configure with a cold-start retry — the first-ever voice-
     // processing engine.start() can yield a dead session with no mic buffers.
@@ -159,13 +167,103 @@ final class MirrorAudioEngine {
       self.engineQueue.async {
         self.log("live mic permission granted=\(granted)")
         guard granted else {
-          self.delegate?.audioEngineDidError(code: "mic_permission_denied")
+          completion("mic_permission_denied")
           return
         }
-        guard self.state == .idle else { return }
+        guard self.state == .idle else { completion(nil); return } // already capturing
         self.didColdRetry = false
+        self.liveStartCompletion = completion
+        self.observeInterruptions()
         self.configureAndStartLive()
       }
+    }
+  }
+
+  /// Fires the pending start completion once, if there is one. Returns true when it consumed the
+  /// outcome, so the caller knows whether to fall back to the error event instead.
+  @discardableResult
+  private func settleLiveStart(_ code: String?) -> Bool {
+    guard let completion = liveStartCompletion else { return false }
+    liveStartCompletion = nil
+    completion(code)
+    return true
+  }
+
+  /// Separate "the mic is held by something else" from a genuine engine fault. The first is
+  /// expected (a call, a meeting app) and worth saying plainly; the second is a bug.
+  private static func errorCode(for error: Error) -> String {
+    let ns = error as NSError
+    // Matched on the code alone: AVAudioSession and AudioUnit failures are OSStatus four-char
+    // codes, distinctive enough that the domain adds nothing — and Swift does not expose a
+    // constant for the AVAudioSession error domain. `Int(...)` because ErrorCode's raw type
+    // differs across SDK versions.
+    let busy: Set<Int> = [
+      Int(AVAudioSession.ErrorCode.isBusy.rawValue),
+      Int(AVAudioSession.ErrorCode.cannotStartRecording.rawValue),
+      Int(AVAudioSession.ErrorCode.cannotInterruptOthers.rawValue),
+      // kAudioUnitErr_CannotDoInCurrentContext — what setVoiceProcessingEnabled returns when
+      // another process already owns the voice-processing unit.
+      -66637,
+    ]
+    return busy.contains(ns.code) ? "mic_unavailable" : "engine_failed"
+  }
+
+  // MARK: - Interruptions
+
+  /// Block-based rather than selector-based: this is a plain Swift class, not an NSObject
+  /// subclass, so it has no @objc members to point a #selector at.
+  private var interruptionObserver: NSObjectProtocol?
+
+  /// Watch for the system handing the audio session to something else — an incoming call, a
+  /// meeting app taking the mic. Without this the capture dies silently mid-session and the UI
+  /// keeps showing a live call nobody can be heard in.
+  private func observeInterruptions() {
+    guard interruptionObserver == nil else { return }
+    interruptionObserver = NotificationCenter.default.addObserver(
+      forName: AVAudioSession.interruptionNotification,
+      object: AVAudioSession.sharedInstance(),
+      queue: nil
+    ) { [weak self] note in
+      self?.handleInterruption(note)
+    }
+  }
+
+  deinit {
+    if let observer = interruptionObserver {
+      NotificationCenter.default.removeObserver(observer)
+    }
+  }
+
+  private func handleInterruption(_ note: Notification) {
+    guard let info = note.userInfo,
+          let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+          let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+
+    switch type {
+    case .began:
+      engineQueue.async { [weak self] in
+        guard let self = self, self.liveMode, self.state != .idle else { return }
+        self.log("interruption began — releasing the session")
+        self.liveNode.stop()
+        self.engine.inputNode.removeTap(onBus: 0)
+        self.engine.stop()
+        self.state = .idle
+        self.delegate?.audioEngineDidError(code: "mic_interrupted")
+      }
+    case .ended:
+      let optsRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+      guard AVAudioSession.InterruptionOptions(rawValue: optsRaw).contains(.shouldResume) else {
+        return
+      }
+      engineQueue.async { [weak self] in
+        guard let self = self, self.liveMode, self.state == .idle else { return }
+        self.log("interruption ended — resuming capture")
+        self.didColdRetry = false
+        // Success re-fires audioEngineDidStartListening, which is the JS layer's resume signal.
+        self.configureAndStartLive()
+      }
+    @unknown default:
+      break
     }
   }
 
@@ -195,11 +293,18 @@ final class MirrorAudioEngine {
       liveNextStartFrame = 0
       startLiveClock()
       state = .listening
+      settleLiveStart(nil)
       delegate?.audioEngineDidStartListening()
       scheduleLiveColdStartCheck()
     } catch {
-      log("live engine_failed: \(error.localizedDescription)")
-      delegate?.audioEngineDidError(code: "engine_failed")
+      let code = Self.errorCode(for: error)
+      log("live \(code): \(error.localizedDescription)")
+      // A first attempt reports through the pending completion so the caller can abort the whole
+      // session; a later one (cold-start retry, interruption resume) has no completion left and
+      // falls back to the error event.
+      if !settleLiveStart(code) {
+        delegate?.audioEngineDidError(code: code)
+      }
     }
   }
 

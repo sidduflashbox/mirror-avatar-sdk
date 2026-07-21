@@ -3,6 +3,7 @@ package com.mirror.avatar.audio
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
@@ -134,13 +135,17 @@ class MirrorAudioEngine(private val context: Context) {
   private val liveTimestamp = AudioTimestamp()
 
   /** Begin continuous capture: stream mic PCM up (16k mono int16, base64); NO local
-   *  VAD/playback (the server owns turn-taking + barge-in). Reuses the comm-mode + AEC. */
-  fun startLiveCapture() {
-    if (state != State.IDLE) { log("startLiveCapture ignored — state=$state"); return }
+   *  VAD/playback (the server owns turn-taking + barge-in). Reuses the comm-mode + AEC.
+   *
+   *  Returns null once capture is running, or a native error code when it is not, so the caller
+   *  can refuse to start a session the user cannot be heard in. */
+  fun startLiveCapture(): String? {
+    if (state != State.IDLE) { log("startLiveCapture ignored — state=$state"); return null }
     try {
       configureSession()
     } catch (e: Exception) {
-      log("live engine_failed: ${e.message}"); teardown(); listener?.onError("engine_failed"); return
+      val code = if (e is MicUnavailableException) "mic_unavailable" else "engine_failed"
+      log("live $code: ${e.message}"); teardown(); return code
     }
     ensureLiveTrack()
     liveMode = true
@@ -284,6 +289,10 @@ class MirrorAudioEngine(private val context: Context) {
 
   // ----- session setup -----
 
+  /** The mic is held by another app (a call, a meeting app) — expected, and distinct from a
+   *  genuine engine fault, so the UI can say something the user can act on. */
+  private class MicUnavailableException(message: String) : IllegalStateException(message)
+
   private fun configureSession() {
     // Voice-communication session for real hardware AEC: comm mode puts playback on
     // the path the canceller references, and VOICE_COMMUNICATION capture engages it.
@@ -291,6 +300,7 @@ class MirrorAudioEngine(private val context: Context) {
     // (a fixed threshold couldn't — which is why this path looked broken before).
     // AEC removing the avatar is what lets barge-in work without self-triggering.
     audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+    requestAudioFocus()
     forceSpeakerAndVolume()
 
     val minBuf = AudioRecord.getMinBufferSize(
@@ -301,13 +311,86 @@ class MirrorAudioEngine(private val context: Context) {
       captureSampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
       maxOf(minBuf, 4096)
     )
-    if (rec.state != AudioRecord.STATE_INITIALIZED) throw IllegalStateException("AudioRecord init failed")
+    // VOICE_COMMUNICATION is exclusive: while another app holds it the constructor returns an
+    // uninitialised record rather than throwing, so this is the contention signal.
+    if (rec.state != AudioRecord.STATE_INITIALIZED) {
+      try { rec.release() } catch (_: Exception) {}
+      throw MicUnavailableException("AudioRecord init failed — mic held by another app")
+    }
     record = rec
     if (AcousticEchoCanceler.isAvailable()) {
       aec = AcousticEchoCanceler.create(rec.audioSessionId)?.apply { enabled = true }
       log("AEC enabled=${aec?.enabled}")
     } else {
       log("AEC unavailable — relying on sustained-onset VAD")
+    }
+  }
+
+  // ----- audio focus: notice when something else takes the voice path -----
+
+  private var focusRequest: AudioFocusRequest? = null
+
+  private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+    when (change) {
+      AudioManager.AUDIOFOCUS_LOSS,
+      AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+        // A call or meeting app took the mic. Capture is dead from here, so say so instead of
+        // showing a live session the user cannot be heard in.
+        if (state != State.IDLE) {
+          log("audio focus lost — releasing the session")
+          teardown()
+          listener?.onError("mic_interrupted")
+        }
+      }
+      AudioManager.AUDIOFOCUS_GAIN -> {
+        // The other app released it. Resume: onListeningStarted is the JS layer's resume signal.
+        if (liveMode && state == State.IDLE) {
+          log("audio focus regained — resuming capture")
+          startLiveCapture()
+        }
+      }
+    }
+  }
+
+  /** Take transient-exclusive focus on the voice path. Best-effort: losing the request does not
+   *  block startup — `AudioRecord` initialisation is the authoritative check — but holding it is
+   *  what makes [focusListener] fire when something else takes over mid-session. */
+  private fun requestAudioFocus() {
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val attrs = AudioAttributes.Builder()
+          .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+          .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+          .build()
+        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+          .setAudioAttributes(attrs)
+          .setOnAudioFocusChangeListener(focusListener)
+          .build()
+        focusRequest = req
+        audioManager.requestAudioFocus(req)
+      } else {
+        @Suppress("DEPRECATION")
+        audioManager.requestAudioFocus(
+          focusListener,
+          AudioManager.STREAM_VOICE_CALL,
+          AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+        )
+      }
+    } catch (e: Exception) {
+      log("audio focus request failed: ${e.message}")
+    }
+  }
+
+  private fun abandonAudioFocus() {
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        focusRequest = null
+      } else {
+        @Suppress("DEPRECATION") audioManager.abandonAudioFocus(focusListener)
+      }
+    } catch (e: Exception) {
+      log("audio focus abandon failed: ${e.message}")
     }
   }
 
@@ -441,6 +524,7 @@ class MirrorAudioEngine(private val context: Context) {
     liveGen = chunkStarts.reset()
     liveTrack?.let { tr -> try { tr.pause(); tr.flush(); tr.stop() } catch (_: Exception) {}; tr.release() }
     liveTrack = null
+    abandonAudioFocus()
     audioManager.mode = AudioManager.MODE_NORMAL
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       audioManager.clearCommunicationDevice()

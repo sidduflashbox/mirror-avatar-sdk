@@ -8,6 +8,7 @@ import android.util.Base64
 import android.util.Log
 import android.view.WindowManager
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
@@ -98,9 +99,21 @@ class MirrorAvatarModule(reactContext: ReactApplicationContext) :
 
   // ----- live streaming (WS voice) -----
 
+  /**
+   * Resolves once the mic is actually capturing, and rejects with the native error code when it
+   * is not — so JS can decline to open a session the user cannot be heard in.
+   */
   @ReactMethod
-  fun startLiveCapture() {
-    withMicPermission(REQ_MIC_LIVE) { engine.startLiveCapture() }
+  fun startLiveCapture(promise: Promise) {
+    withMicPermission(
+      REQ_MIC_LIVE,
+      granted = {
+        val err = engine.startLiveCapture()
+        if (err == null) promise.resolve(null)
+        else promise.reject(err, "live audio capture failed: $err")
+      },
+      denied = { promise.reject("mic_permission_denied", "microphone permission denied") },
+    )
   }
 
   @ReactMethod
@@ -159,15 +172,25 @@ class MirrorAvatarModule(reactContext: ReactApplicationContext) :
 
   // ----- helpers -----
 
-  /** Runs [granted] once RECORD_AUDIO is held, requesting it first if needed. */
-  private fun withMicPermission(requestCode: Int, granted: () -> Unit) {
+  /**
+   * Runs [granted] once RECORD_AUDIO is held, requesting it first if needed.
+   *
+   * [denied] lets a promise-based caller reject instead of only raising the error event; when it
+   * is omitted the event is the sole report, which is what the fire-and-forget callers want.
+   */
+  private fun withMicPermission(
+    requestCode: Int,
+    denied: (() -> Unit)? = null,
+    granted: () -> Unit,
+  ) {
+    val onDenied = denied ?: { emit("onError", err("mic_permission_denied")) }
     val ctx = reactApplicationContext
     if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
         == PackageManager.PERMISSION_GRANTED) {
       granted(); return
     }
     val activity = getCurrentActivity() as? PermissionAwareActivity
-    if (activity == null) { emit("onError", err("mic_permission_denied")); return }
+    if (activity == null) { onDenied(); return }
     activity.requestPermissions(
       arrayOf(Manifest.permission.RECORD_AUDIO), requestCode,
       PermissionListener { req, _, results ->
@@ -175,7 +198,7 @@ class MirrorAvatarModule(reactContext: ReactApplicationContext) :
         if (results.isNotEmpty() && results[0] == PackageManager.PERMISSION_GRANTED) {
           granted()
         } else {
-          emit("onError", err("mic_permission_denied"))
+          onDenied()
         }
         true
       }

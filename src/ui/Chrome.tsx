@@ -171,7 +171,19 @@ export function Captions({ session }: { session: MirrorSession }) {
 export function ErrorWhisper({ session }: { session: MirrorSession }) {
   const [message, setMessage] = useState('');
   useEffect(
-    () => session.subscribe({ onError: (e) => setMessage(e.message || e.code) }),
+    () =>
+      session.subscribe({
+        // Last-resort fallbacks: an error must never render as a blank line. `message` is the
+        // human copy, `code` is at least identifiable, and the literal covers a malformed error
+        // arriving from a consumer-supplied callback.
+        onError: (e) =>
+          setMessage(e?.message?.trim() || e?.code || 'Something went wrong.'),
+        // A live call clears whatever failed before it — a recovered reconnect must not leave
+        // "Connection lost" sitting under a working conversation.
+        onState: (s) => {
+          if (s === 'listening' || s === 'speaking' || s === 'thinking') setMessage('');
+        },
+      }),
     [session],
   );
   if (!message) return null;

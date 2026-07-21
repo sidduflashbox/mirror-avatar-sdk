@@ -93,8 +93,19 @@ final class MirrorAvatarModule: RCTEventEmitter {
 
   // MARK: - Live streaming (WS voice)
 
-  @objc func startLiveCapture() {
-    listenEngine.startLiveCapture()
+  /// Resolves once the mic is actually capturing, and rejects with the native error code when it
+  /// is not — so JS can decline to open a session the user cannot be heard in.
+  @objc func startLiveCapture(
+    _ resolve: @escaping RCTPromiseResolveBlock,
+    rejecter reject: @escaping RCTPromiseRejectBlock
+  ) {
+    listenEngine.startLiveCapture { code in
+      if let code = code {
+        reject(code, "live audio capture failed: \(code)", nil)
+      } else {
+        resolve(nil)
+      }
+    }
   }
 
   @objc func stopLiveCapture() {
