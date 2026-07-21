@@ -239,8 +239,14 @@ export class MirrorSession {
    */
   subscribe(listener: MirrorSessionListener): () => void {
     this.listeners.add(listener);
-    listener.onState?.(this._state);
-    if (this.lastError) listener.onError?.(this.lastError);
+    // Guarded for the same reason as emit(): this replay runs inside the caller's effect, so a
+    // throwing handler would break the subscribing component's mount, not just its own callback.
+    try {
+      listener.onState?.(this._state);
+      if (this.lastError) listener.onError?.(this.lastError);
+    } catch {
+      // Contained — the listener stays subscribed for subsequent events.
+    }
     return () => {
       this.listeners.delete(listener);
     };
@@ -309,6 +315,11 @@ export class MirrorSession {
       return;
     }
 
+    // Opening the mic is slow enough to hang up inside — a first-run permission prompt lasts as
+    // long as the user takes to answer it. Without this the socket would open after stop(),
+    // leaving a live, billing session nobody owns.
+    if (!this.started) return;
+
     await this.session.start();
   }
 
@@ -369,8 +380,23 @@ export class MirrorSession {
     this.emit((l) => l.onError?.(error));
   }
 
+  /**
+   * Deliver to every listener, isolating each one.
+   *
+   * These callbacks are the consumer's own code. Without the guard a single throwing handler
+   * aborts the iteration — so the SDK's own chrome, registered after the consumer's, stops
+   * receiving captions, state and errors — and the exception surfaces inside a native event
+   * handler far from its cause. Nothing useful can be done with a host's exception here, so it
+   * is contained rather than re-raised.
+   */
   private emit(fn: (listener: MirrorSessionListener) => void): void {
-    this.listeners.forEach(fn);
+    this.listeners.forEach((listener) => {
+      try {
+        fn(listener);
+      } catch {
+        // A broken consumer callback must not take the session down with it.
+      }
+    });
   }
 }
 

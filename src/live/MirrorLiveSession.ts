@@ -234,6 +234,8 @@ export class MirrorLiveSession {
       });
       return;
     }
+    // Minting a token is a network round trip the user can hang up inside.
+    if (this.closed) return;
     this.transport.setUrlToken?.(token.token);
     this.scheduleProactive(token.expiresInMs);
     this.transport.connect();
@@ -297,6 +299,8 @@ export class MirrorLiveSession {
       this.deps.onState('stopped'); // session gone past the window
       return;
     }
+    // As in start(): the mint is awaited, and a stop() during it must not reconnect.
+    if (this.closed) return;
     this.transport.setUrlToken?.(token.token);
     this.scheduleProactive(token.expiresInMs);
     this.transport.connect();
