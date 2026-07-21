@@ -2,6 +2,7 @@ import { NativeEventEmitter, NativeModules } from 'react-native';
 import { WebSocketLiveTransport } from './WebSocketLiveTransport';
 import { MirrorLiveSession } from './MirrorLiveSession';
 import { base64ToArrayBuffer } from './base64';
+import { outboundMicFrame } from './micGate';
 import { rmsFromPcm16 } from './micLevel';
 import type { MirrorLiveTransport } from './MirrorLiveTransport';
 import type {
@@ -247,7 +248,8 @@ export class MirrorSession {
 
   /**
    * Client-side only — there is no server mute control. The mic stays open (so unmute is
-   * instant) and frames are simply not sent.
+   * instant) and the user's audio is replaced with silence on the way out, rather than
+   * withheld: the server's turn detector needs to keep seeing frames to end a turn.
    */
   mute(muted: boolean): void {
     this._muted = muted;
@@ -280,13 +282,10 @@ export class MirrorSession {
     this.subs = [
       this.emitter.addListener('onAudioFrame', (e: { base64: string }) => {
         const frame = base64ToArrayBuffer(e.base64);
-        // Gate before the wire, and zero the meter while muted — never send silence.
-        if (this._muted) {
-          this.micLevel.current = 0;
-          return;
-        }
-        this.micLevel.current = rmsFromPcm16(frame);
-        this.transport.sendAudioFrame(frame);
+        // The meter shows the real input, so it reads zero while muted. The wire still gets a
+        // frame every tick — see outboundMicFrame for why muting must not go silent-by-omission.
+        this.micLevel.current = this._muted ? 0 : rmsFromPcm16(frame);
+        this.transport.sendAudioFrame(outboundMicFrame(this._muted, frame));
       }),
       this.emitter.addListener('onChunkStarted', (e: { seq: number }) =>
         this.session.onChunkStarted(e.seq),
